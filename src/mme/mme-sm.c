@@ -34,6 +34,7 @@
 #include "mme-fd-path.h"
 #include "mme-s6a-handler.h"
 #include "mme-s13-handler.h"
+#include "mme-s10-handler.h"
 #include "mme-path.h"
 #include "mme-dns.h"
 
@@ -1086,6 +1087,24 @@ cleanup:
             ogs_error("Unknown timer[%s:%d]",
                     mme_timer_get_name(e->timer_id), e->timer_id);
         }
+        break;
+
+    case MME_EVENT_S10_MESSAGE:
+        pkbuf = e->pkbuf;
+        ogs_assert(pkbuf);
+
+        if (ogs_gtp2_parse_msg(&gtp_message, pkbuf) != OGS_OK) {
+            ogs_error("ogs_gtp2_parse_msg() failed");
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
+
+        mme_s10_handle_message(e->gnode, &gtp_message);
+        ogs_pkbuf_free(pkbuf);
+        break;
+
+    case MME_EVENT_S10_TIMER:
+        mme_s10_handle_timer(e);
         break;
 
     case MME_EVENT_SGSAP_LO_SCTP_COMM_UP:

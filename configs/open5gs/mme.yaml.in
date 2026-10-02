@@ -200,6 +200,50 @@ mme:
 #        - name: sgsn3.open5gs.org
 #          default_route: true
 #
+#  o S10 peer MMEs (TS 23.401, TS 29.274), e.g. the other MMEs of a pool.
+#    A peer is found by GUMMEI for the old MME of a GUTI, and by TAI
+#    for the target MME of a handover. The same list can be copied into
+#    every MME: the entry using a GUMMEI of this MME is skipped.
+#  gtpc:
+#    client:
+#      mme:
+#        - id: mme1
+#          address: 127.0.0.2
+#          gummei:
+#            - plmn_id:
+#                mcc: 999
+#                mnc: 70
+#              mme_gid: 2
+#              mme_code: 1
+#          tai:
+#            - plmn_id:
+#                mcc: 999
+#                mnc: 70
+#              tac: 1
+#        - id: mme2
+#          address: 127.0.0.12
+#          gummei:
+#            - plmn_id:
+#                mcc: 999
+#                mnc: 70
+#              mme_gid: 2
+#              mme_code: 2
+#          tai:
+#            - plmn_id:
+#                mcc: 999
+#                mnc: 70
+#              tac: [2, 3]
+#
+#  o S10 path management (optional)
+#    echo_interval: periodic Echo Request in seconds, at least 60
+#                   (TS 29.274 7.1.1). No periodic Echo when absent.
+#    restart_counter_file: keeps the restart counter sent in the
+#                   Recovery IE across restarts (TS 23.007). Without it,
+#                   the counter is derived from the start time.
+#  s10:
+#    echo_interval: 60
+#    restart_counter_file: @localstatedir@/lib/open5gs/mme-s10-restart-counter
+#
 ################################################################################
 # SGaAP Server
 ################################################################################

@@ -172,17 +172,22 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
     /* Link before allocating timers so failure cleanup can unlink safely. */
     ogs_list_add(&xact->gnode->local_list, xact);
 
-    xact->tm_response = ogs_timer_add(
-            ogs_app()->timer_mgr, response_timeout,
-            OGS_UINT_TO_POINTER(xact->id));
-    if (!xact->tm_response) {
-        ogs_error("Maximum number of xact->tm_response[%lld] reached",
-                    (long long)ogs_app()->pool.timer);
-        ogs_gtp_xact_delete(xact);
-        return NULL;
+    /* TS 29.274 7.6 : T3-RESPONSE is only started for a request message
+     * for which a response has been defined. No response is defined for
+     * the Configuration Transfer Tunnel message (TS 29.274 7.3.18). */
+    if (hdesc->type != OGS_GTP2_CONFIGURATION_TRANSFER_TUNNEL_TYPE) {
+        xact->tm_response = ogs_timer_add(
+                ogs_app()->timer_mgr, response_timeout,
+                OGS_UINT_TO_POINTER(xact->id));
+        if (!xact->tm_response) {
+            ogs_error("Maximum number of xact->tm_response[%lld] reached",
+                        (long long)ogs_app()->pool.timer);
+            ogs_gtp_xact_delete(xact);
+            return NULL;
+        }
+        xact->response_rcount =
+            ogs_local_conf()->time.message.gtp.n3_response_rcount;
     }
-    xact->response_rcount =
-        ogs_local_conf()->time.message.gtp.n3_response_rcount,
 
     xact->tm_holding = ogs_timer_add(
             ogs_app()->timer_mgr, holding_timeout,
@@ -1052,6 +1057,10 @@ int ogs_gtp_xact_receive(
             } else {
                 list = &gnode->remote_list;
             }
+        } else if (type == OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE) {
+            /* Reply to a reply : the transaction was created on the
+             * reception of the Context Request, in the remote list. */
+            list = &gnode->remote_list;
         } else {
             list = &gnode->local_list;
         }
@@ -1192,7 +1201,19 @@ static ogs_gtp_xact_stage_t ogs_gtp2_xact_get_stage(uint8_t type, uint32_t xid)
     case OGS_GTP2_PGW_RESTART_NOTIFICATION_TYPE:
     case OGS_GTP2_UPDATE_PDN_CONNECTION_SET_REQUEST_TYPE:
     case OGS_GTP2_MODIFY_ACCESS_BEARERS_REQUEST_TYPE:
+    /* S10 (TS 29.274 clause 7.3) */
+    case OGS_GTP2_IDENTIFICATION_REQUEST_TYPE:
+    case OGS_GTP2_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_COMPLETE_NOTIFICATION_TYPE:
+    case OGS_GTP2_FORWARD_ACCESS_CONTEXT_NOTIFICATION_TYPE:
+    case OGS_GTP2_RELOCATION_CANCEL_REQUEST_TYPE:
+    case OGS_GTP2_CONFIGURATION_TRANSFER_TUNNEL_TYPE:
         stage = GTP_XACT_INITIAL_STAGE;
+        break;
+    /* The Context Response triggers a Context Acknowledge */
+    case OGS_GTP2_CONTEXT_RESPONSE_TYPE:
+        stage = GTP_XACT_INTERMEDIATE_STAGE;
         break;
     case OGS_GTP2_CREATE_BEARER_REQUEST_TYPE:
     case OGS_GTP2_UPDATE_BEARER_REQUEST_TYPE:
@@ -1228,6 +1249,13 @@ static ogs_gtp_xact_stage_t ogs_gtp2_xact_get_stage(uint8_t type, uint32_t xid)
     case OGS_GTP2_PGW_RESTART_NOTIFICATION_ACKNOWLEDGE_TYPE:
     case OGS_GTP2_UPDATE_PDN_CONNECTION_SET_RESPONSE_TYPE:
     case OGS_GTP2_MODIFY_ACCESS_BEARERS_RESPONSE_TYPE:
+    /* S10 (TS 29.274 clause 7.3) */
+    case OGS_GTP2_IDENTIFICATION_RESPONSE_TYPE:
+    case OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_RESPONSE_TYPE:
+    case OGS_GTP2_FORWARD_RELOCATION_COMPLETE_ACKNOWLEDGE_TYPE:
+    case OGS_GTP2_FORWARD_ACCESS_CONTEXT_ACKNOWLEDGE_TYPE:
+    case OGS_GTP2_RELOCATION_CANCEL_RESPONSE_TYPE:
         stage = GTP_XACT_FINAL_STAGE;
         break;
 

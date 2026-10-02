@@ -28,6 +28,7 @@
 #include "mme-sm.h"
 #include "mme-gtp-path.h"
 #include "mme-dns.h"
+#include "mme-s10-context.h"
 
 static mme_context_t self;
 static ogs_diam_config_t g_diam_conf;
@@ -119,6 +120,9 @@ void mme_context_init(void)
     ogs_pool_init(&mme_gn_teid_pool, ogs_global_conf()->max.ue);
     ogs_pool_random_id_generate(&mme_gn_teid_pool);
 
+    mme_s10_context_init();
+    mme_s10_teid_pool_init(ogs_global_conf()->max.ue);
+
     ogs_pool_init(&enb_ue_pool, ogs_global_conf()->max.ue);
     ogs_pool_init(&sgw_ue_pool, ogs_global_conf()->max.ue);
     ogs_pool_init(&mme_sess_pool, ogs_app()->pool.sess);
@@ -162,6 +166,9 @@ void mme_context_final(void)
     mme_sgsn_remove_all();
     mme_hssmap_remove_all();
     mme_emerg_remove_all();
+
+    mme_s10_teid_pool_final();
+    mme_s10_context_final();
 
     ogs_assert(self.enb_addr_hash);
     ogs_hash_destroy(self.enb_addr_hash);
@@ -1450,12 +1457,20 @@ int mme_context_parse_config(void)
 
                                     } while (ogs_yaml_iter_type(&sgsn_array) ==
                                             YAML_SEQUENCE_NODE);
+                                } else if (!strcmp(client_key, "mme")) {
+                                    /* S10 peer MMEs */
+                                    rv = mme_s10_parse_peer_config(
+                                            &client_iter);
+                                    if (rv != OGS_OK) return rv;
                                 } else
                                     ogs_warn("unknown key `%s`", client_key);
                             }
                         } else
                             ogs_warn("unknown key `%s`", gtpc_key);
                     }
+                } else if (!strcmp(mme_key, "s10")) {
+                    rv = mme_s10_parse_config(&mme_iter);
+                    if (rv != OGS_OK) return rv;
                 } else if (!strcmp(mme_key, "gummei")) {
                     ogs_yaml_iter_t gummei_array, gummei_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &gummei_array);
@@ -2779,6 +2794,10 @@ int mme_context_parse_config(void)
     rv = mme_context_validation();
     if (rv != OGS_OK) return rv;
 
+    /* Needs mme.gummei, which may come after mme.gtpc in the file */
+    rv = mme_s10_context_validate();
+    if (rv != OGS_OK) return rv;
+
     return OGS_OK;
 }
 
@@ -3992,6 +4011,9 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     ogs_hash_set(self.mme_gn_teid_hash,
             &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), mme_ue);
 
+    /* Set MME-S10-TEID */
+    mme_s10_ue_teid_alloc(mme_ue);
+
     /*
      * When used for the first time, if last node is set,
      * the search is performed from the first SGW in a round-robin manner.
@@ -4097,6 +4119,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
 
     ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
     ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
+    mme_s10_ue_teid_free(mme_ue);
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
     ogs_info("[Removed] Number of MME-UEs is now %d",
             ogs_list_count(&self.mme_ue_list));

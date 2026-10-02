@@ -572,6 +572,12 @@ struct mme_ue_s {
         ogs_pool_id_t   gtp_xact_id; /* 2g->4g SGSN Context Req/Resp/Ack gtp1c xact */
     } gn;
 
+    /* S10 towards a peer MME, see mme-s10-context.h */
+    struct {
+        ogs_pool_id_t   *mme_s10_teid_node; /* A node of MME-S10-TEID */
+        uint32_t        mme_s10_teid;   /* MME-S10-TEID is derived from NODE */
+    } s10;
+
     struct {
 #define MME_NEXT_GUTI_IS_AVAILABLE(__mME) ((__mME)->next.m_tmsi)
 #define MME_CURRENT_GUTI_IS_AVAILABLE(__mME) ((__mME)->current.m_tmsi)

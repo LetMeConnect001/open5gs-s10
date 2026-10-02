@@ -43,6 +43,9 @@ libmme_sources = files('''
     mme-gtp-path.h
     mme-s11-build.h
     mme-s11-handler.h
+    mme-s10-context.h
+    mme-s10-path.h
+    mme-s10-handler.h
     sbc-message.h
     sbc-handler.h
     mme-sm.h
@@ -82,6 +85,9 @@ libmme_sources = files('''
     mme-gtp-path.c
     mme-s11-build.c
     mme-s11-handler.c
+    mme-s10-context.c
+    mme-s10-path.c
+    mme-s10-handler.c
     mme-sm.c
     mme-path.c
     mme-dns-select.c

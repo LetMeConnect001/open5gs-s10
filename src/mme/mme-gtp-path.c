@@ -27,6 +27,8 @@
 #include "mme-s11-build.h"
 #include "mme-sm.h"
 #include "mme-dns.h"
+#include "mme-s10-handler.h"
+#include "mme-s10-path.h"
 
 static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
@@ -39,7 +41,8 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     ogs_sockaddr_t from;
     mme_sgw_t *sgw = NULL;
     mme_sgsn_t *sgsn = NULL;
-    uint8_t gtp_ver;
+    mme_s10_peer_t *s10_peer = NULL;
+    uint8_t gtp_ver, gtp_type;
 
     ogs_assert(fd != INVALID_SOCKET);
 
@@ -73,15 +76,28 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         break;
     case 2:
         sgw = mme_sgw_find_by_addr(&from);
-        if (!sgw) {
-            ogs_error("Unknown SGW : %s", OGS_ADDR(&from, buf));
+        s10_peer = mme_s10_peer_find_by_addr(&from);
+        gtp_type = pkbuf->len >= 2 ?
+            ((ogs_gtp2_header_t *)pkbuf->data)->type : 0;
+
+        /*
+         * A node may be both an SGW and a peer MME. The S10 mobility
+         * management messages then go to S10, the others to S11.
+         */
+        if (s10_peer &&
+            (!sgw || MME_S10_IS_MOBILITY_MESSAGE(gtp_type))) {
+            e = mme_event_new(MME_EVENT_S10_MESSAGE);
+            ogs_assert(e);
+            e->gnode = &s10_peer->gnode;
+        } else if (sgw) {
+            e = mme_event_new(MME_EVENT_S11_MESSAGE);
+            ogs_assert(e);
+            e->gnode = &sgw->gnode;
+        } else {
+            ogs_error("Unknown GTPv2-C peer : %s", OGS_ADDR(&from, buf));
             ogs_pkbuf_free(pkbuf);
             return;
         }
-        ogs_assert(sgw);
-        e = mme_event_new(MME_EVENT_S11_MESSAGE);
-        ogs_assert(e);
-        e->gnode = &sgw->gnode;
         break;
     default:
         ogs_warn("Rx unexpected GTP version %u", gtp_ver);
@@ -257,11 +273,16 @@ int mme_gtp_open(void)
         ogs_assert(rv == OGS_OK);
     }
 
+    rv = mme_s10_open();
+    if (rv != OGS_OK) return rv;
+
     return OGS_OK;
 }
 
 void mme_gtp_close(void)
 {
+    mme_s10_close();
+
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list);
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list6);
 }

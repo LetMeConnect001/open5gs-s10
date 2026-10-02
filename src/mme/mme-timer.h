@@ -47,6 +47,8 @@ typedef enum {
 
     MME_TIMER_GN_HOLDING,
 
+    MME_TIMER_S10_ECHO,
+
     MME_TIMER_SGS_CLI_CONN_TO_SRV,
 
     MAX_NUM_OF_MME_TIMER,

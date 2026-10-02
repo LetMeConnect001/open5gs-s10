@@ -147,6 +147,29 @@ void ogs_gtp2_send_error_message(
     case OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE:
         tlv = &errmsg.bearer_resource_failure_indication.cause;
         break;
+
+    /* S10 (TS 29.274 clause 7.3) */
+    case OGS_GTP2_IDENTIFICATION_RESPONSE_TYPE:
+        tlv = &errmsg.identification_response.cause;
+        break;
+    case OGS_GTP2_CONTEXT_RESPONSE_TYPE:
+        tlv = &errmsg.context_response.cause;
+        break;
+    case OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE:
+        tlv = &errmsg.context_acknowledge.cause;
+        break;
+    case OGS_GTP2_FORWARD_RELOCATION_RESPONSE_TYPE:
+        tlv = &errmsg.forward_relocation_response.cause;
+        break;
+    case OGS_GTP2_FORWARD_RELOCATION_COMPLETE_ACKNOWLEDGE_TYPE:
+        tlv = &errmsg.forward_relocation_complete_acknowledge.cause;
+        break;
+    case OGS_GTP2_FORWARD_ACCESS_CONTEXT_ACKNOWLEDGE_TYPE:
+        tlv = &errmsg.forward_access_context_acknowledge.cause;
+        break;
+    case OGS_GTP2_RELOCATION_CANCEL_RESPONSE_TYPE:
+        tlv = &errmsg.relocation_cancel_response.cause;
+        break;
     default:
         ogs_fatal("Invalid message[%d]", type);
         ogs_assert_if_reached();
@@ -175,6 +198,16 @@ void ogs_gtp2_send_error_message(
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
+
+    /*
+     * TS 29.274 7.3.7 : a Context Acknowledge is only sent for a Context
+     * Response with an acceptance cause. A rejected Context Response is
+     * not retransmitted while waiting for it. The holding timer started
+     * on the reception of the Context Request releases the transaction.
+     */
+    if (rv == OGS_OK && type == OGS_GTP2_CONTEXT_RESPONSE_TYPE &&
+        xact->tm_response)
+        ogs_timer_stop(xact->tm_response);
 }
 
 void ogs_gtp2_send_echo_request(
