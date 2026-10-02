@@ -34,6 +34,7 @@
 #include "mme-gtp-path.h"
 #include "mme-path.h"
 #include "mme-sm.h"
+#include "mme-s10-handler.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __emm_log_domain
@@ -497,6 +498,10 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
 
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
                 CLEAR_MME_UE_TIMER(mme_ue->t3470);
+                /* GUTI of a peer MME : ask the old MME on S10 first */
+                if (mme_s10_identification_start(enb_ue, mme_ue,
+                        &message->emm.attach_request, e->pkbuf, h))
+                    break;
                 r = nas_eps_send_identity_request(mme_ue);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);

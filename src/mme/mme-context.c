@@ -4385,6 +4385,8 @@ static const char *mme_ue_imsi_source_name(mme_ue_imsi_source_e source)
         return "IDENTITY_RESPONSE";
     case MME_UE_IMSI_FROM_SGSN_CONTEXT_RESPONSE:
         return "SGSN_CONTEXT_RESPONSE";
+    case MME_UE_IMSI_FROM_IDENTIFICATION_RESPONSE:
+        return "IDENTIFICATION_RESPONSE";
     }
     return "UNKNOWN";
 }

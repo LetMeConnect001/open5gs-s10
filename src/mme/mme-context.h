@@ -576,6 +576,8 @@ struct mme_ue_s {
     struct {
         ogs_pool_id_t   *mme_s10_teid_node; /* A node of MME-S10-TEID */
         uint32_t        mme_s10_teid;   /* MME-S10-TEID is derived from NODE */
+        /* S10 request sent by this MME and not answered yet */
+        ogs_pool_id_t   xact_id;
     } s10;
 
     struct {
@@ -1310,6 +1312,7 @@ typedef enum {
     MME_UE_IMSI_FROM_ATTACH_REQUEST = 0,
     MME_UE_IMSI_FROM_IDENTITY_RESPONSE,
     MME_UE_IMSI_FROM_SGSN_CONTEXT_RESPONSE,
+    MME_UE_IMSI_FROM_IDENTIFICATION_RESPONSE,  /* S10 */
 } mme_ue_imsi_source_e;
 
 int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,

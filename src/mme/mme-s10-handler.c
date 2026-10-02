@@ -20,6 +20,11 @@
 #include "ogs-gtp.h"
 
 #include "mme-timer.h"
+#include "mme-sm.h"
+#include "mme-gtp-path.h"
+#include "mme-fd-path.h"
+#include "nas-path.h"
+#include "nas-security.h"
 #include "mme-s10-path.h"
 #include "mme-s10-handler.h"
 
@@ -84,12 +89,283 @@ static void handle_echo_response(mme_s10_peer_t *peer,
 {
     ogs_debug("S10: Echo Response from `%s`", peer->id);
 
+    /* The local transaction of the Echo Request ends here */
+    ogs_expect(ogs_gtp_xact_commit(xact) == OGS_OK);
+
     if (rsp->recovery.presence)
         mme_s10_handle_recovery(peer, rsp->recovery.u8);
     else
         ogs_warn("S10: no Recovery in Echo Response from `%s`", peer->id);
 
     path_up(peer);
+}
+
+static void nas_guti_from_gtp(
+        ogs_nas_eps_guti_t *nas_guti, const ogs_gtp2_guti_t *guti)
+{
+    memset(nas_guti, 0, sizeof(*nas_guti));
+    memcpy(&nas_guti->nas_plmn_id, &guti->nas_plmn_id, OGS_PLMN_ID_LEN);
+    nas_guti->mme_gid = guti->mme_gid;
+    nas_guti->mme_code = guti->mme_code;
+    nas_guti->m_tmsi = guti->m_tmsi;
+}
+
+/*
+ * Old MME, TS 23.401 5.3.2.1 step 3 : verify the Attach Request by its
+ * NAS MAC, then answer with the IMSI and the MM Context of the UE.
+ */
+static void handle_identification_request(mme_s10_peer_t *peer,
+        ogs_gtp_xact_t *xact, ogs_gtp2_identification_request_t *req)
+{
+    uint8_t cause = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
+    mme_ue_t *mme_ue = NULL;
+    ogs_gtp2_guti_t guti;
+    ogs_nas_eps_guti_t nas_guti;
+    ogs_plmn_id_t plmn_id;
+    ogs_gtp2_complete_request_message_t complete;
+
+    if (!req->guti.presence ||
+        ogs_gtp2_parse_guti(&guti, &req->guti) <= 0) {
+        /* RAI and P-TMSI identify a UE of an SGSN, not of this MME */
+        ogs_warn("S10: Identification Request from `%s` without GUTI",
+                peer->id);
+        cause = OGS_GTP2_CAUSE_IMSI_IMEI_NOT_KNOWN;
+        goto out;
+    }
+
+    nas_guti_from_gtp(&nas_guti, &guti);
+    ogs_nas_to_plmn_id(&plmn_id, &nas_guti.nas_plmn_id);
+    if (!mme_s10_gummei_is_local(&plmn_id, nas_guti.mme_gid,
+                nas_guti.mme_code))
+        mme_ue = NULL;
+    else
+        mme_ue = mme_ue_find_by_guti(&nas_guti);
+
+    ogs_info("S10: Identification Request from `%s` "
+            "GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI[%s]", peer->id,
+            nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi,
+            mme_ue ? mme_ue->imsi_bcd : "Unknown");
+
+    if (!mme_ue || !MME_UE_HAVE_IMSI(mme_ue)) {
+        cause = OGS_GTP2_CAUSE_IMSI_IMEI_NOT_KNOWN;
+        goto out;
+    }
+
+    if (!req->complete_attach_request_message.presence ||
+        ogs_gtp2_parse_complete_request_message(&complete,
+            &req->complete_attach_request_message) <= 0 ||
+        complete.type !=
+            OGS_GTP2_COMPLETE_REQUEST_MESSAGE_TYPE_ATTACH_REQUEST) {
+        ogs_warn("[%s] S10: no Complete Attach Request Message",
+                mme_ue->imsi_bcd);
+        cause = OGS_GTP2_CAUSE_USER_AUTHENTICATION_FAILED;
+        goto out;
+    }
+
+    if (!nas_eps_security_check_complete_request(
+                mme_ue, complete.data, complete.len)) {
+        cause = OGS_GTP2_CAUSE_USER_AUTHENTICATION_FAILED;
+        goto out;
+    }
+
+out:
+    if (cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+        mme_ue = NULL;
+
+    mme_s10_send_identification_response(xact, cause, mme_ue);
+}
+
+/*
+ * New MME : continue the Attach procedure, with the IMSI from the old
+ * MME, or with an Identity Request to the UE.
+ *
+ * The EPS security context received from the old MME is not taken into
+ * use: the UE is authenticated again (authentication is optional in
+ * TS 23.401 5.3.2.1 step 5a, and always allowed).
+ */
+static void identification_done(mme_ue_t *mme_ue, bool success)
+{
+    int r, xact_count;
+    enb_ue_t *enb_ue = NULL;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_error("[%s] S1 context has already been removed",
+                mme_ue->imsi_bcd);
+        return;
+    }
+
+    if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_de_registered)) {
+        ogs_warn("[%s] Attach is no longer in progress", mme_ue->imsi_bcd);
+        return;
+    }
+
+    if (success && MME_UE_HAVE_IMSI(mme_ue)) {
+        xact_count = mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR);
+
+        mme_gtp_send_delete_all_sessions(enb_ue, mme_ue,
+                OGS_GTP_DELETE_SEND_AUTHENTICATION_REQUEST);
+
+        if (!MME_SESSION_RELEASE_PENDING(mme_ue) &&
+            mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR) ==
+                xact_count) {
+            mme_s6a_send_air(enb_ue, mme_ue, NULL);
+        }
+
+        OGS_FSM_TRAN(&mme_ue->sm, &emm_state_authentication);
+        return;
+    }
+
+    CLEAR_MME_UE_TIMER(mme_ue->t3470);
+    r = nas_eps_send_identity_request(mme_ue);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+}
+
+void mme_s10_handle_identification_failure(
+        ogs_pool_id_t mme_ue_id, ogs_pool_id_t xact_id)
+{
+    mme_ue_t *mme_ue = mme_ue_find_by_id(mme_ue_id);
+
+    if (!mme_ue) {
+        ogs_error("S10: UE has already been removed");
+        return;
+    }
+    if (mme_ue->s10.xact_id != xact_id) {
+        ogs_warn("S10: stale Identification transaction");
+        return;
+    }
+    mme_ue->s10.xact_id = OGS_INVALID_POOL_ID;
+
+    identification_done(mme_ue, false);
+}
+
+static void handle_identification_response(mme_s10_peer_t *peer,
+        ogs_gtp_xact_t *xact, ogs_gtp2_identification_response_t *rsp)
+{
+    ogs_pool_id_t mme_ue_id, xact_id;
+    mme_ue_t *mme_ue = NULL;
+    ogs_gtp2_cause_t *cause = NULL;
+    ogs_gtp2_mm_context_t mm_context;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+
+    mme_ue_id = OGS_POINTER_TO_UINT(xact->data);
+    xact_id = xact->id;
+
+    /* The local transaction ends here */
+    ogs_expect(ogs_gtp_xact_commit(xact) == OGS_OK);
+
+    mme_ue = mme_ue_find_by_id(mme_ue_id);
+    if (!mme_ue) {
+        ogs_error("S10: UE has already been removed");
+        return;
+    }
+    if (mme_ue->s10.xact_id != xact_id) {
+        ogs_warn("S10: stale Identification Response");
+        return;
+    }
+    mme_ue->s10.xact_id = OGS_INVALID_POOL_ID;
+
+    if (rsp->cause.presence && rsp->cause.len >= sizeof(*cause))
+        cause = rsp->cause.data;
+    if (!cause || cause->value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        ogs_warn("S10: Identification Response from `%s` rejected "
+                "[cause:%d]", peer->id, cause ? cause->value : 0);
+        identification_done(mme_ue, false);
+        return;
+    }
+
+    if (!rsp->imsi.presence || !rsp->imsi.len ||
+        !ogs_buffer_to_bcd(rsp->imsi.data, rsp->imsi.len,
+            imsi_bcd, sizeof(imsi_bcd))) {
+        ogs_error("S10: Identification Response from `%s` without IMSI",
+                peer->id);
+        identification_done(mme_ue, false);
+        return;
+    }
+
+    /* The MM Context is checked even if it is not taken into use */
+    if (!rsp->mme_sgsn_ue_mm_context.presence ||
+        ogs_gtp2_parse_mm_context(&mm_context,
+            &rsp->mme_sgsn_ue_mm_context) <= 0)
+        ogs_warn("[%s] S10: no usable MM Context from `%s`",
+                imsi_bcd, peer->id);
+
+    ogs_info("[%s] S10: Identification Response from `%s`",
+            imsi_bcd, peer->id);
+
+    if (mme_ue_set_imsi(mme_ue, imsi_bcd,
+                MME_UE_IMSI_FROM_IDENTIFICATION_RESPONSE) != OGS_OK) {
+        ogs_error("[%s] mme_ue_set_imsi() failed", imsi_bcd);
+        identification_done(mme_ue, false);
+        return;
+    }
+
+    identification_done(mme_ue, true);
+}
+
+bool mme_s10_identification_start(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        ogs_nas_eps_attach_request_t *attach_request, ogs_pkbuf_t *pkbuf,
+        ogs_nas_security_header_type_t h)
+{
+    ogs_nas_eps_mobile_identity_t *identity = NULL;
+    ogs_nas_eps_guti_t nas_guti;
+    ogs_plmn_id_t plmn_id;
+    mme_s10_peer_t *peer = NULL;
+    int rv;
+
+    ogs_assert(mme_ue);
+    ogs_assert(attach_request);
+    ogs_assert(pkbuf);
+
+    identity = &attach_request->eps_mobile_identity;
+    if (identity->imsi.type != OGS_NAS_EPS_MOBILE_IDENTITY_GUTI)
+        return false;
+
+    memset(&nas_guti, 0, sizeof(nas_guti));
+    nas_guti.nas_plmn_id = identity->guti.nas_plmn_id;
+    nas_guti.mme_gid = identity->guti.mme_gid;
+    nas_guti.mme_code = identity->guti.mme_code;
+    nas_guti.m_tmsi = identity->guti.m_tmsi;
+
+    ogs_nas_to_plmn_id(&plmn_id, &nas_guti.nas_plmn_id);
+    if (mme_s10_gummei_is_local(&plmn_id, nas_guti.mme_gid,
+                nas_guti.mme_code))
+        return false;
+
+    peer = mme_s10_select_peer_by_guti(&nas_guti);
+    if (!peer)
+        return false;
+
+    if (peer->path_state == MME_S10_PATH_DOWN) {
+        ogs_warn("S10: path to old MME `%s` is down, "
+                "Identity procedure used", peer->id);
+        return false;
+    }
+
+    /* The old MME can only check an integrity protected message */
+    if (!h.integrity_protected) {
+        ogs_info("S10: Attach Request not integrity protected, "
+                "Identity procedure used");
+        return false;
+    }
+
+    /* Retransmitted Attach Request while the answer is awaited */
+    if (mme_ue->s10.xact_id != OGS_INVALID_POOL_ID &&
+        ogs_gtp_xact_find_by_id(mme_ue->s10.xact_id))
+        return true;
+    mme_ue->s10.xact_id = OGS_INVALID_POOL_ID;
+
+    /* The NAS security header was removed by the S1AP layer */
+    if (!ogs_pkbuf_push(pkbuf, sizeof(ogs_nas_eps_security_header_t))) {
+        ogs_error("No NAS security header in the Attach Request");
+        return false;
+    }
+    rv = mme_s10_send_identification_request(peer, mme_ue, &nas_guti,
+            pkbuf->data, pkbuf->len);
+    ogs_assert(ogs_pkbuf_pull(pkbuf, sizeof(ogs_nas_eps_security_header_t)));
+
+    return rv == OGS_OK;
 }
 
 void mme_s10_handle_message(
@@ -132,6 +408,15 @@ void mme_s10_handle_message(
         break;
 
     case OGS_GTP2_IDENTIFICATION_REQUEST_TYPE:
+        handle_identification_request(
+                peer, xact, &message->identification_request);
+        break;
+
+    case OGS_GTP2_IDENTIFICATION_RESPONSE_TYPE:
+        handle_identification_response(
+                peer, xact, &message->identification_response);
+        break;
+
     case OGS_GTP2_CONTEXT_REQUEST_TYPE:
     case OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE:
     case OGS_GTP2_FORWARD_RELOCATION_COMPLETE_NOTIFICATION_TYPE:

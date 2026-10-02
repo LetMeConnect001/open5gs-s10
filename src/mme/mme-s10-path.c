@@ -21,6 +21,7 @@
 
 #include "mme-event.h"
 #include "mme-timer.h"
+#include "mme-s10-build.h"
 #include "mme-s10-handler.h"
 #include "mme-s10-path.h"
 
@@ -122,6 +123,94 @@ int mme_s10_send_echo_request(mme_s10_peer_t *peer)
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
         return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+/* No Identification Response after all the retransmissions */
+static void identification_timeout(ogs_gtp_xact_t *xact, void *data)
+{
+    ogs_assert(xact);
+
+    ogs_warn("S10: no Identification Response");
+    mme_s10_handle_identification_failure(
+            OGS_POINTER_TO_UINT(data), xact->id);
+}
+
+int mme_s10_send_identification_request(mme_s10_peer_t *peer,
+        mme_ue_t *mme_ue, const ogs_nas_eps_guti_t *guti,
+        const uint8_t *nas, int nas_len)
+{
+    int rv;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp_xact_t *xact = NULL;
+
+    ogs_assert(peer);
+    ogs_assert(mme_ue);
+    ogs_assert(guti);
+
+    /* No F-TEID is sent : the TEID of the old MME is not known (5.5.2) */
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP2_IDENTIFICATION_REQUEST_TYPE;
+    h.teid = 0;
+
+    pkbuf = mme_s10_build_identification_request(guti, nas, nas_len);
+    if (!pkbuf) {
+        ogs_error("mme_s10_build_identification_request() failed");
+        return OGS_ERROR;
+    }
+
+    xact = ogs_gtp_xact_local_create(&peer->gnode, &h, pkbuf,
+            identification_timeout, OGS_UINT_TO_POINTER(mme_ue->id));
+    if (!xact) {
+        ogs_error("ogs_gtp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_commit(xact);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp_xact_commit() failed");
+        return rv;
+    }
+
+    mme_ue->s10.xact_id = xact->id;
+
+    ogs_info("[%s] S10: Identification Request to `%s` "
+            "GUTI[G:%d,C:%d,M_TMSI:0x%x]",
+            mme_ue->imsi_bcd, peer->id,
+            guti->mme_gid, guti->mme_code, guti->m_tmsi);
+
+    return OGS_OK;
+}
+
+int mme_s10_send_identification_response(
+        ogs_gtp_xact_t *xact, uint8_t cause_value, mme_ue_t *mme_ue)
+{
+    int rv;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(xact);
+
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP2_IDENTIFICATION_RESPONSE_TYPE;
+    h.teid = 0;
+
+    pkbuf = mme_s10_build_identification_response(cause_value, mme_ue);
+    if (!pkbuf) {
+        ogs_error("mme_s10_build_identification_response() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_update_tx(xact, &h, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp_xact_update_tx() failed");
+        return rv;
     }
 
     rv = ogs_gtp_xact_commit(xact);

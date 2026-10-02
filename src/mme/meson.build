@@ -44,6 +44,7 @@ libmme_sources = files('''
     mme-s11-build.h
     mme-s11-handler.h
     mme-s10-context.h
+    mme-s10-build.h
     mme-s10-path.h
     mme-s10-handler.h
     sbc-message.h
@@ -86,6 +87,7 @@ libmme_sources = files('''
     mme-s11-build.c
     mme-s11-handler.c
     mme-s10-context.c
+    mme-s10-build.c
     mme-s10-path.c
     mme-s10-handler.c
     mme-sm.c

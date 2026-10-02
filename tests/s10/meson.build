@@ -1,4 +1,4 @@
-# Copyright (C) 2019 by Sukchan Lee <acetcom@gmail.com>
+# Copyright (C) 2026 by Sukchan Lee <acetcom@gmail.com>
 
 # This file is part of Open5GS.
 
@@ -15,25 +15,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-testinc = include_directories('.')
+testapp_s10_sources = files('''
+    abts-main.c
+    s10-peer.c
+    identification-test.c
+'''.split())
 
-subdir('core')
-subdir('crypt')
-subdir('sctp')
-subdir('unit')
-subdir('af')
-subdir('common')
-subdir('app')
-subdir('eir')
-subdir('registration')
-subdir('vonr')
-subdir('slice')
-subdir('attach')
-subdir('dns')
-subdir('s10')
-subdir('volte')
-subdir('csfb')
-subdir('310014')
-subdir('handover')
-subdir('non3gpp')
-subdir('transfer')
+testapp_s10_exe = executable('s10',
+    sources : testapp_s10_sources,
+    c_args : testunit_core_cc_flags,
+    dependencies : libtestepc_dep)
+
+test('s10', testapp_s10_exe, is_parallel : false, suite: 'epc')

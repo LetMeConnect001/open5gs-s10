@@ -32,6 +32,16 @@ ogs_pkbuf_t *nas_eps_security_encode(
 int nas_eps_security_decode(mme_ue_t *mme_ue, 
     ogs_nas_security_header_type_t security_header_type, ogs_pkbuf_t *pkbuf);
 
+/*
+ * Check the NAS MAC of a complete NAS message received from another MME
+ * (Complete Request Message IE on S10, TS 23.401 5.3.2.1 and 5.3.3.1).
+ * 'data' starts with the NAS security header. On success, the uplink
+ * NAS COUNT of the UE is updated. On failure, the UE context is left
+ * unchanged.
+ */
+bool nas_eps_security_check_complete_request(
+        mme_ue_t *mme_ue, const uint8_t *data, int len);
+
 #ifdef __cplusplus
 }
 #endif

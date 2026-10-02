@@ -45,6 +45,20 @@ void mme_s10_handle_recovery(mme_s10_peer_t *peer, uint8_t recovery);
 /* GTP-C path failure towards a peer (TS 23.007) */
 void mme_s10_handle_path_failure(mme_s10_peer_t *peer);
 
+/*
+ * New MME, TS 23.401 5.3.2.1 step 3 : Attach Request with a GUTI of a
+ * peer MME. Sends an Identification Request to the old MME and returns
+ * true when the answer is awaited. Returns false when the Identity
+ * procedure must be used instead.
+ */
+bool mme_s10_identification_start(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        ogs_nas_eps_attach_request_t *attach_request, ogs_pkbuf_t *pkbuf,
+        ogs_nas_security_header_type_t h);
+
+/* No usable Identification Response : fall back to Identity Request */
+void mme_s10_handle_identification_failure(
+        ogs_pool_id_t mme_ue_id, ogs_pool_id_t xact_id);
+
 #ifdef __cplusplus
 }
 #endif

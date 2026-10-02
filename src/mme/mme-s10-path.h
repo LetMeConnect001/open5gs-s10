@@ -33,6 +33,16 @@ void mme_s10_close(void);
 int mme_s10_send_echo_request(mme_s10_peer_t *peer);
 
 /*
+ * Identification (TS 23.401 5.3.2.1 step 3, TS 29.274 7.3.8 and 7.3.9)
+ * 'nas' is the complete Attach Request message, security header included.
+ */
+int mme_s10_send_identification_request(mme_s10_peer_t *peer,
+        mme_ue_t *mme_ue, const ogs_nas_eps_guti_t *guti,
+        const uint8_t *nas, int nas_len);
+int mme_s10_send_identification_response(
+        ogs_gtp_xact_t *xact, uint8_t cause_value, mme_ue_t *mme_ue);
+
+/*
  * Reply to an S10 request with a response that only carries a Cause.
  * 'request_type' is the type of the received request.
  */

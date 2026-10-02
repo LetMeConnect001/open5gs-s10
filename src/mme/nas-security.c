@@ -292,3 +292,76 @@ int nas_eps_security_decode(mme_ue_t *mme_ue,
 
     return OGS_OK;
 }
+
+bool nas_eps_security_check_complete_request(
+        mme_ue_t *mme_ue, const uint8_t *data, int len)
+{
+    ogs_pkbuf_t *pkbuf = NULL;
+    uint8_t security_header_type, protocol_discriminator, sequence_number;
+    uint8_t mac[NAS_SECURITY_MAC_SIZE];
+    uint32_t estimated_ul_count;
+
+    ogs_assert(mme_ue);
+
+    /* Security header (6 octets) followed by at least the EMM header */
+    if (!data || len < 6 + 2) {
+        ogs_error("[%s] Complete Request Message too short [%d]",
+                mme_ue->imsi_bcd, len);
+        return false;
+    }
+
+    security_header_type = data[0] >> 4;
+    protocol_discriminator = data[0] & 0x0f;
+    sequence_number = data[5];
+
+    if (protocol_discriminator != OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM ||
+        security_header_type != OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED) {
+        ogs_error("[%s] Complete Request Message is not an integrity "
+                "protected EMM message [0x%02x]", mme_ue->imsi_bcd, data[0]);
+        return false;
+    }
+
+    if (!SECURITY_CONTEXT_IS_VALID(mme_ue) ||
+        mme_ue->selected_int_algorithm == 0) {
+        ogs_error("[%s] No valid security context to check the "
+                "Complete Request Message", mme_ue->imsi_bcd);
+        return false;
+    }
+
+    /* TS 24.301 4.4.3.1 : estimate the uplink NAS COUNT */
+    estimated_ul_count = mme_ue->ul_count.i32 & 0x00ffff00;
+    if (mme_ue->ul_count.sqn > sequence_number)
+        estimated_ul_count = (estimated_ul_count + 0x100) & 0x00ffff00;
+    estimated_ul_count |= sequence_number;
+
+    /* TS 33.401 8.1.1 : replay protection */
+    if (mme_ue->ul_count_accepted == true &&
+        estimated_ul_count <= mme_ue->ul_count.i32) {
+        ogs_error("[%s] Complete Request Message replayed "
+                "[UL NAS COUNT:0x%06x, LAST ACCEPTED:0x%06x]",
+                mme_ue->imsi_bcd, estimated_ul_count, mme_ue->ul_count.i32);
+        return false;
+    }
+
+    /* The MAC covers the sequence number and the NAS message */
+    pkbuf = ogs_pkbuf_alloc(NULL, OGS_NAS_HEADROOM + len);
+    ogs_assert(pkbuf);
+    ogs_pkbuf_reserve(pkbuf, OGS_NAS_HEADROOM);
+    ogs_pkbuf_put_data(pkbuf, data + 5, len - 5);
+
+    ogs_nas_mac_calculate(mme_ue->selected_int_algorithm,
+        mme_ue->knas_int, estimated_ul_count, NAS_SECURITY_BEARER,
+        OGS_NAS_SECURITY_UPLINK_DIRECTION, pkbuf, mac);
+    ogs_pkbuf_free(pkbuf);
+
+    if (memcmp(mac, data + 1, NAS_SECURITY_MAC_SIZE) != 0) {
+        ogs_warn("[%s] Complete Request Message MAC verification failed",
+                mme_ue->imsi_bcd);
+        return false;
+    }
+
+    mme_ue->ul_count.i32 = estimated_ul_count;
+    mme_ue->ul_count_accepted = true;
+
+    return true;
+}
