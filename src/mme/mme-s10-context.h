@@ -115,6 +115,10 @@ mme_s10_peer_t *mme_s10_select_peer_by_tai(const ogs_eps_tai_t *tai);
 bool mme_s10_gummei_is_local(
         const ogs_plmn_id_t *plmn_id, uint16_t mme_gid, uint8_t mme_code);
 
+/* S10 part of a UE context : local TEID and holding timer */
+void mme_s10_ue_init(mme_ue_t *mme_ue);
+void mme_s10_ue_fini(mme_ue_t *mme_ue);
+
 /* Local S10 TEID of the UE (TS 29.274 clause 5.5) */
 void mme_s10_teid_pool_init(int max_ue);
 void mme_s10_teid_pool_final(void);

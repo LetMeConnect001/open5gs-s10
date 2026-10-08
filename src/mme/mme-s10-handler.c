@@ -304,13 +304,54 @@ static void handle_identification_response(mme_s10_peer_t *peer,
     identification_done(mme_ue, true);
 }
 
+mme_s10_peer_t *mme_s10_peer_of_old_guti(
+        const ogs_nas_eps_mobile_identity_t *identity,
+        ogs_nas_security_header_type_t h, ogs_nas_eps_guti_t *nas_guti)
+{
+    ogs_plmn_id_t plmn_id;
+    mme_s10_peer_t *peer = NULL;
+
+    ogs_assert(identity);
+    ogs_assert(nas_guti);
+
+    if (identity->imsi.type != OGS_NAS_EPS_MOBILE_IDENTITY_GUTI)
+        return NULL;
+
+    memset(nas_guti, 0, sizeof(*nas_guti));
+    nas_guti->nas_plmn_id = identity->guti.nas_plmn_id;
+    nas_guti->mme_gid = identity->guti.mme_gid;
+    nas_guti->mme_code = identity->guti.mme_code;
+    nas_guti->m_tmsi = identity->guti.m_tmsi;
+
+    ogs_nas_to_plmn_id(&plmn_id, &nas_guti->nas_plmn_id);
+    if (mme_s10_gummei_is_local(&plmn_id, nas_guti->mme_gid,
+                nas_guti->mme_code))
+        return NULL;
+
+    peer = mme_s10_select_peer_by_guti(nas_guti);
+    if (!peer)
+        return NULL;
+
+    if (peer->path_state == MME_S10_PATH_DOWN) {
+        ogs_warn("S10: path to old MME `%s` is down", peer->id);
+        return NULL;
+    }
+
+    /* The old MME can only check an integrity protected message */
+    if (!h.integrity_protected) {
+        ogs_info("S10: NAS message not integrity protected, "
+                "old MME `%s` not asked", peer->id);
+        return NULL;
+    }
+
+    return peer;
+}
+
 bool mme_s10_identification_start(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         ogs_nas_eps_attach_request_t *attach_request, ogs_pkbuf_t *pkbuf,
         ogs_nas_security_header_type_t h)
 {
-    ogs_nas_eps_mobile_identity_t *identity = NULL;
     ogs_nas_eps_guti_t nas_guti;
-    ogs_plmn_id_t plmn_id;
     mme_s10_peer_t *peer = NULL;
     int rv;
 
@@ -318,37 +359,10 @@ bool mme_s10_identification_start(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_assert(attach_request);
     ogs_assert(pkbuf);
 
-    identity = &attach_request->eps_mobile_identity;
-    if (identity->imsi.type != OGS_NAS_EPS_MOBILE_IDENTITY_GUTI)
-        return false;
-
-    memset(&nas_guti, 0, sizeof(nas_guti));
-    nas_guti.nas_plmn_id = identity->guti.nas_plmn_id;
-    nas_guti.mme_gid = identity->guti.mme_gid;
-    nas_guti.mme_code = identity->guti.mme_code;
-    nas_guti.m_tmsi = identity->guti.m_tmsi;
-
-    ogs_nas_to_plmn_id(&plmn_id, &nas_guti.nas_plmn_id);
-    if (mme_s10_gummei_is_local(&plmn_id, nas_guti.mme_gid,
-                nas_guti.mme_code))
-        return false;
-
-    peer = mme_s10_select_peer_by_guti(&nas_guti);
+    peer = mme_s10_peer_of_old_guti(
+            &attach_request->eps_mobile_identity, h, &nas_guti);
     if (!peer)
         return false;
-
-    if (peer->path_state == MME_S10_PATH_DOWN) {
-        ogs_warn("S10: path to old MME `%s` is down, "
-                "Identity procedure used", peer->id);
-        return false;
-    }
-
-    /* The old MME can only check an integrity protected message */
-    if (!h.integrity_protected) {
-        ogs_info("S10: Attach Request not integrity protected, "
-                "Identity procedure used");
-        return false;
-    }
 
     /* Retransmitted Attach Request while the answer is awaited */
     if (mme_ue->s10.xact_id != OGS_INVALID_POOL_ID &&
@@ -418,6 +432,20 @@ void mme_s10_handle_message(
         break;
 
     case OGS_GTP2_CONTEXT_REQUEST_TYPE:
+        mme_s10_handle_context_request(
+                peer, xact, &message->context_request);
+        break;
+
+    case OGS_GTP2_CONTEXT_RESPONSE_TYPE:
+        mme_s10_handle_context_response(
+                peer, xact, &message->context_response);
+        break;
+
+    case OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE:
+        mme_s10_handle_context_acknowledge(
+                peer, xact, mme_ue, &message->context_acknowledge);
+        break;
+
     case OGS_GTP2_FORWARD_RELOCATION_REQUEST_TYPE:
     case OGS_GTP2_FORWARD_RELOCATION_COMPLETE_NOTIFICATION_TYPE:
     case OGS_GTP2_FORWARD_ACCESS_CONTEXT_NOTIFICATION_TYPE:
@@ -446,8 +474,19 @@ void mme_s10_handle_message(
 void mme_s10_handle_timer(mme_event_t *e)
 {
     mme_s10_peer_t *peer = NULL;
+    mme_ue_t *mme_ue = NULL;
 
     ogs_assert(e);
+
+    if (e->timer_id == MME_TIMER_S10_HOLDING) {
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        if (!mme_ue) {
+            ogs_error("S10: UE has already been removed");
+            return;
+        }
+        mme_s10_handle_holding_timer(mme_ue);
+        return;
+    }
 
     peer = mme_s10_peer_find_by_gnode(e->gnode);
     if (!peer) {

@@ -134,6 +134,9 @@ typedef struct ogs_gtp_xact_s {
 #define OGS_GTP_DELETE_HANDLE_PDN_CONNECTIVITY_REQUEST          7
 #define OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST                   8
 #define OGS_GTP_DELETE_SEND_TAU_ACCEPT                          9
+/* Old MME after a TAU with MME and SGW change (TS 23.401 5.3.3.1 step 18):
+ * the old SGW releases the PDN connection without deleting it in the PGW */
+#define OGS_GTP_DELETE_IN_MME_RELOCATION                        10
 
     int             delete_action;
 
@@ -155,6 +158,9 @@ typedef struct ogs_gtp_xact_s {
 
 #define OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST 1
 #define OGS_GTP_MODIFY_IN_E_RAB_MODIFICATION 2
+/* New MME after a TAU with MME change and without SGW change
+ * (TS 23.401 5.3.3.2 step 9) */
+#define OGS_GTP_MODIFY_IN_TRACKING_AREA_UPDATE 3
     int             modify_action;
 } ogs_gtp_xact_t;
 

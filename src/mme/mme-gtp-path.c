@@ -182,6 +182,22 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
+    /* S10 : the PDN connections stay in the PGW in both cases */
+    if (type == OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE &&
+        xact->modify_action == OGS_GTP_MODIFY_IN_TRACKING_AREA_UPDATE) {
+        ogs_error("[%s] No Modify Bearer Response in TAU", mme_ue->imsi_bcd);
+        mme_s10_handle_tau_failure(enb_ue, mme_ue,
+                OGS_NAS_EMM_CAUSE_NETWORK_FAILURE);
+        return;
+    }
+    if (type == OGS_GTP2_DELETE_SESSION_REQUEST_TYPE &&
+        xact->delete_action == OGS_GTP_DELETE_IN_MME_RELOCATION) {
+        ogs_error("[%s] No Delete Session Response from the old SGW",
+                mme_ue->imsi_bcd);
+        mme_s10_handle_old_ue_released(mme_ue);
+        return;
+    }
+
     if (type == OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
         mme_dns_retry_on_gtp_timeout(sess))
         return;
@@ -391,6 +407,52 @@ int mme_gtp_send_modify_bearer_request(
     }
     xact->modify_action = modify_action;
     xact->local_teid = mme_ue->gn.mme_gn_teid;
+    if (enb_ue)
+        xact->enb_ue_id = enb_ue->id;
+    else
+        xact->enb_ue_id = OGS_INVALID_POOL_ID;
+
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int mme_gtp_send_modify_bearer_request_in_tau(
+        enb_ue_t *enb_ue, mme_sess_t *sess)
+{
+    int rv;
+    ogs_gtp_xact_t *xact = NULL;
+    mme_ue_t *mme_ue = NULL;
+    sgw_ue_t *sgw_ue = NULL;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(sess);
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    ogs_assert(mme_ue);
+    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    ogs_assert(sgw_ue);
+
+    memset(&h, 0, sizeof(ogs_gtp2_header_t));
+    h.type = OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE;
+    h.teid = sgw_ue->sgw_s11_teid;
+
+    pkbuf = mme_s11_build_modify_bearer_request_in_tau(h.type, sess);
+    if (!pkbuf) {
+        ogs_error("mme_s11_build_modify_bearer_request_in_tau() failed");
+        return OGS_ERROR;
+    }
+
+    xact = ogs_gtp_xact_local_create(
+            sgw_ue->gnode, &h, pkbuf, timeout,
+            OGS_UINT_TO_POINTER(mme_ue->id));
+    if (!xact) {
+        ogs_error("ogs_gtp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+    xact->modify_action = OGS_GTP_MODIFY_IN_TRACKING_AREA_UPDATE;
+    xact->local_teid = mme_ue->mme_s11_teid;
     if (enb_ue)
         xact->enb_ue_id = enb_ue->id;
     else

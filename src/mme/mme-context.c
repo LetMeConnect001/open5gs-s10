@@ -4011,8 +4011,8 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     ogs_hash_set(self.mme_gn_teid_hash,
             &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), mme_ue);
 
-    /* Set MME-S10-TEID */
-    mme_s10_ue_teid_alloc(mme_ue);
+    /* Set MME-S10-TEID and the S10 holding timer */
+    mme_s10_ue_init(mme_ue);
 
     /*
      * When used for the first time, if last node is set,
@@ -4119,7 +4119,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
 
     ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
     ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
-    mme_s10_ue_teid_free(mme_ue);
+    mme_s10_ue_fini(mme_ue);
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
     ogs_info("[Removed] Number of MME-UEs is now %d",
             ogs_list_count(&self.mme_ue_list));
@@ -4387,6 +4387,8 @@ static const char *mme_ue_imsi_source_name(mme_ue_imsi_source_e source)
         return "SGSN_CONTEXT_RESPONSE";
     case MME_UE_IMSI_FROM_IDENTIFICATION_RESPONSE:
         return "IDENTIFICATION_RESPONSE";
+    case MME_UE_IMSI_FROM_CONTEXT_RESPONSE:
+        return "CONTEXT_RESPONSE";
     }
     return "UNKNOWN";
 }

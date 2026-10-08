@@ -346,12 +346,26 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         }
 
         memset(&bearer_qos, 0, sizeof(bearer_qos));
-        bearer_qos.qci = session->qos.index;
-        bearer_qos.priority_level = session->qos.arp.priority_level;
-        bearer_qos.pre_emption_capability =
-            session->qos.arp.pre_emption_capability;
-        bearer_qos.pre_emption_vulnerability =
-            session->qos.arp.pre_emption_vulnerability;
+        if (create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE) {
+            /* Existing bearers keep their own QoS (dedicated bearers) */
+            bearer_qos.qci = bearer->qos.index;
+            bearer_qos.priority_level = bearer->qos.arp.priority_level;
+            bearer_qos.pre_emption_capability =
+                bearer->qos.arp.pre_emption_capability;
+            bearer_qos.pre_emption_vulnerability =
+                bearer->qos.arp.pre_emption_vulnerability;
+            bearer_qos.ul_mbr = bearer->qos.mbr.uplink;
+            bearer_qos.dl_mbr = bearer->qos.mbr.downlink;
+            bearer_qos.ul_gbr = bearer->qos.gbr.uplink;
+            bearer_qos.dl_gbr = bearer->qos.gbr.downlink;
+        } else {
+            bearer_qos.qci = session->qos.index;
+            bearer_qos.priority_level = session->qos.arp.priority_level;
+            bearer_qos.pre_emption_capability =
+                session->qos.arp.pre_emption_capability;
+            bearer_qos.pre_emption_vulnerability =
+                session->qos.arp.pre_emption_vulnerability;
+        }
         req->bearer_contexts_to_be_created[i].bearer_level_qos.presence = 1;
         ogs_gtp2_build_bearer_qos(
                 &req->bearer_contexts_to_be_created[i].bearer_level_qos,
@@ -503,6 +517,81 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     return ogs_gtp2_build_msg(&gtp_message);
 }
 
+/*
+ * TS 23.401 5.3.3.2 step 9 : the new MME sends a Modify Bearer Request
+ * per PDN connection. The UE is in ECM-IDLE, so the bearers carry only
+ * their EBI. The Sender F-TEID tells the SGW that the MME has changed
+ * (TS 29.274 Table 7.2.7-1).
+ */
+ogs_pkbuf_t *mme_s11_build_modify_bearer_request_in_tau(
+        uint8_t type, mme_sess_t *sess)
+{
+    int rv, len, i;
+    ogs_gtp2_message_t *gtp_message = NULL;
+    ogs_gtp2_modify_bearer_request_t *req = NULL;
+    ogs_gtp2_f_teid_t mme_s11_teid;
+    ogs_gtp2_uli_t uli;
+    char uli_buf[OGS_GTP2_MAX_ULI_LEN];
+    ogs_nas_plmn_id_t serving_network;
+    mme_ue_t *mme_ue = NULL;
+    mme_bearer_t *bearer = NULL;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(sess);
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    ogs_assert(mme_ue);
+
+    gtp_message = ogs_calloc(1, sizeof(*gtp_message));
+    ogs_assert(gtp_message);
+    req = &gtp_message->modify_bearer_request;
+
+    memset(&mme_s11_teid, 0, sizeof(ogs_gtp2_f_teid_t));
+    mme_s11_teid.interface_type = OGS_GTP2_F_TEID_S11_MME_GTP_C;
+    mme_s11_teid.teid = htobe32(mme_ue->mme_s11_teid);
+    rv = ogs_gtp2_sockaddr_to_f_teid(
+            ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
+            &mme_s11_teid, &len);
+    ogs_assert(rv == OGS_OK);
+    req->sender_f_teid_for_control_plane.presence = 1;
+    req->sender_f_teid_for_control_plane.data = &mme_s11_teid;
+    req->sender_f_teid_for_control_plane.len = len;
+
+    i = 0;
+    ogs_list_for_each(&sess->bearer_list, bearer) {
+        if (i >= OGS_BEARER_PER_UE)
+            break;
+        req->bearer_contexts_to_be_modified[i].presence = 1;
+        req->bearer_contexts_to_be_modified[i].eps_bearer_id.presence = 1;
+        req->bearer_contexts_to_be_modified[i].eps_bearer_id.u8 = bearer->ebi;
+        i++;
+    }
+
+    memset(&uli, 0, sizeof(ogs_gtp2_uli_t));
+    uli.flags.e_cgi = 1;
+    uli.flags.tai = 1;
+    ogs_nas_from_plmn_id(&uli.tai.nas_plmn_id, &mme_ue->tai.plmn_id);
+    uli.tai.tac = mme_ue->tai.tac;
+    ogs_nas_from_plmn_id(&uli.e_cgi.nas_plmn_id, &mme_ue->e_cgi.plmn_id);
+    uli.e_cgi.cell_id = mme_ue->e_cgi.cell_id;
+    req->user_location_information.presence = 1;
+    ogs_gtp2_build_uli(&req->user_location_information, &uli,
+            uli_buf, OGS_GTP2_MAX_ULI_LEN);
+
+    ogs_nas_from_plmn_id(&serving_network, &mme_ue->tai.plmn_id);
+    req->serving_network.presence = 1;
+    req->serving_network.data = &serving_network;
+    req->serving_network.len = sizeof(serving_network);
+
+    req->rat_type.presence = 1;
+    req->rat_type.u8 = OGS_GTP2_RAT_TYPE_EUTRAN;
+
+    gtp_message->h.type = type;
+    pkbuf = ogs_gtp2_build_msg(gtp_message);
+    ogs_free(gtp_message);
+
+    return pkbuf;
+}
+
 ogs_pkbuf_t *mme_s11_build_delete_session_request(
         uint8_t type, mme_sess_t *sess, int action)
 {
@@ -548,7 +637,9 @@ ogs_pkbuf_t *mme_s11_build_delete_session_request(
             uli_buf, OGS_GTP2_MAX_ULI_LEN);
 
     memset(&indication, 0, sizeof(ogs_gtp2_indication_t));
-    if (action == OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) {
+    if (action == OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST ||
+        action == OGS_GTP_DELETE_IN_MME_RELOCATION) {
+        /* SGW change : the PDN connection is kept in the PGW */
         indication.scope_indication = 1;
     } else {
         indication.operation_indication = 1;

@@ -36,14 +36,18 @@ extern "C" {
 
 typedef struct test_s10_peer_s {
     int fd;
+    ogs_pkbuf_t *last;      /* Buffer of the last received message */
 } test_s10_peer_t;
 
 int test_s10_peer_open(test_s10_peer_t *peer);
+/* A fake GTPv2-C node at another address, e.g. the SGW */
+int test_s10_peer_open_at(test_s10_peer_t *peer, const char *address);
 void test_s10_peer_close(test_s10_peer_t *peer);
 
 /*
  * Receive one GTPv2-C message from the MME. Returns the parsed message
- * and its sequence number, or OGS_ERROR after 'timeout_ms'.
+ * and its sequence number, or OGS_ERROR after 'timeout_ms'. The message
+ * points into a buffer kept until the next receive on this node.
  */
 int test_s10_peer_recv(test_s10_peer_t *peer, int timeout_ms,
         ogs_gtp2_message_t *message, uint32_t *sqn);

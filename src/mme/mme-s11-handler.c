@@ -32,6 +32,7 @@
 
 #include "mme-s11-build.h"
 #include "mme-s11-handler.h"
+#include "mme-s10-handler.h"
 
 static uint8_t esm_cause_from_gtp(uint8_t gtp_cause)
 {
@@ -581,8 +582,15 @@ void mme_s11_handle_create_session_response(
         }
 
     } else if (create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE) {
+        if (mme_ue->s10.tau) {
+            /* S10 : TS 23.401 5.3.3.1 step 12, after the last PDN */
+            GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_CREATE_SESSION_BY_S10_TAU,
+                mme_s10_handle_tau_sessions_updated(enb_ue, mme_ue);
+            );
+        } else {
         /* 3GPP TS 23.401 D.3.6 "Gn/Gp SGSN to MME Tracking Area Update" step 13, 14: */
         mme_s6a_send_ulr(enb_ue, mme_ue, OGS_DIAM_S6A_ULR_SINGLE_REGISTRATION_IND);
+        }
     } else if (create_action == OGS_GTP_CREATE_IN_UPLINK_NAS_TRANSPORT) {
         r = nas_eps_send_activate_default_bearer_context_request(
                 bearer, create_action);
@@ -656,6 +664,13 @@ void mme_s11_handle_modify_bearer_response(
     }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
+
+    /* S10 : TAU with MME change and without SGW change */
+    if (modify_action == OGS_GTP_MODIFY_IN_TRACKING_AREA_UPDATE) {
+        mme_s10_handle_tau_modify_bearer_response(
+                enb_ue, mme_ue, mme_ue_from_teid, rsp);
+        return;
+    }
 
     /************************
      * Getting Cause Value
@@ -926,6 +941,17 @@ void mme_s11_handle_delete_session_response(
         );
 
         return;
+
+    } else if (action == OGS_GTP_DELETE_IN_MME_RELOCATION) {
+
+        /* S10 : the old MME releases the UE after the last session */
+        if (mme_sess_count(mme_ue) == 1) /* Last Session */ {
+            mme_s10_handle_old_ue_released(mme_ue);
+
+            /* mme_sess_remove() should not be called here
+             * since mme_ue_remove() has already been executed. */
+            return;
+        }
 
     } else if (action == OGS_GTP_DELETE_SEND_TAU_ACCEPT) {
 

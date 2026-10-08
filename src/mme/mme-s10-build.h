@@ -42,6 +42,34 @@ ogs_pkbuf_t *mme_s10_build_identification_request(
 ogs_pkbuf_t *mme_s10_build_identification_response(
         uint8_t cause_value, mme_ue_t *mme_ue);
 
+/*
+ * Bearer Context within a PDN Connection (TS 29.274 Table 7.3.6-3).
+ * The generated structure names each F-TEID instance after the first
+ * table that defines it. In a PDN Connection :
+ *   instance 0 : SGW S1-U F-TEID
+ *   instance 1 : PGW S5/S8-U F-TEID
+ */
+#define MME_S10_PDN_BEARER_SGW_S1U(__bEARER) ((__bEARER)->s1_u_enodeb_f_teid)
+#define MME_S10_PDN_BEARER_PGW_S5U(__bEARER) ((__bEARER)->s4_u_sgsn_f_teid)
+
+/*
+ * TS 29.274 7.3.5 : 'nas' is the complete TAU Request message, security
+ * header included. The S10 F-TEID of the UE is sent for the answer.
+ */
+ogs_pkbuf_t *mme_s10_build_context_request(mme_ue_t *mme_ue,
+        const ogs_nas_eps_guti_t *guti, const uint8_t *nas, int nas_len);
+
+/*
+ * TS 29.274 7.3.6 : with an acceptance cause, the IMSI, the MM Context,
+ * the PDN Connections, the S10 F-TEID of the UE and the SGW S11 F-TEID.
+ */
+ogs_pkbuf_t *mme_s10_build_context_response(
+        uint8_t cause_value, mme_ue_t *mme_ue);
+
+/* TS 29.274 7.3.7 */
+ogs_pkbuf_t *mme_s10_build_context_acknowledge(
+        uint8_t cause_value, bool sgw_change);
+
 #ifdef __cplusplus
 }
 #endif

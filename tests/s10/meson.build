@@ -18,7 +18,9 @@
 testapp_s10_sources = files('''
     abts-main.c
     s10-peer.c
+    s10-sgw.c
     identification-test.c
+    tau-test.c
 '''.split())
 
 testapp_s10_exe = executable('s10',

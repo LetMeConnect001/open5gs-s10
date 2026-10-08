@@ -446,6 +446,65 @@ cleanup:
             cause_value);
 }
 
+/*
+ * Modify Bearer Response without user plane change : TAU with MME change
+ * and without SGW change, UE in ECM-IDLE (TS 23.401 5.3.3.2).
+ * TS 29.274 Table 7.2.8-1 : one Bearer Context modified per Bearer Context
+ * to be modified, with the EPS Bearer ID and the Cause (Table 7.2.8-2).
+ */
+static void send_modify_bearer_response_cp_only(ogs_gtp_xact_t *s11_xact,
+        sgwc_ue_t *sgwc_ue, ogs_gtp2_modify_bearer_request_t *req)
+{
+    ogs_gtp2_message_t send_message;
+    ogs_gtp2_modify_bearer_response_t *rsp =
+        &send_message.modify_bearer_response;
+    ogs_gtp2_cause_t cause;
+    ogs_pkbuf_t *pkbuf = NULL;
+    int i, rv;
+
+    memset(&send_message, 0, sizeof(send_message));
+
+    memset(&cause, 0, sizeof(cause));
+    cause.value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
+
+    rsp->cause.presence = 1;
+    rsp->cause.data = &cause;
+    rsp->cause.len = sizeof(cause);
+
+    for (i = 0; i < OGS_BEARER_PER_UE; i++) {
+        if (req->bearer_contexts_to_be_modified[i].presence == 0 ||
+            req->bearer_contexts_to_be_modified[i].eps_bearer_id.
+                presence == 0)
+            break;
+
+        rsp->bearer_contexts_modified[i].presence = 1;
+        rsp->bearer_contexts_modified[i].eps_bearer_id.presence = 1;
+        rsp->bearer_contexts_modified[i].eps_bearer_id.u8 =
+            req->bearer_contexts_to_be_modified[i].eps_bearer_id.u8;
+        rsp->bearer_contexts_modified[i].cause.presence = 1;
+        rsp->bearer_contexts_modified[i].cause.data = &cause;
+        rsp->bearer_contexts_modified[i].cause.len = sizeof(cause);
+    }
+
+    send_message.h.type = OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE;
+    send_message.h.teid = sgwc_ue->mme_s11_teid;
+
+    pkbuf = ogs_gtp2_build_msg(&send_message);
+    if (!pkbuf) {
+        ogs_error("ogs_gtp2_build_msg() failed");
+        return;
+    }
+
+    rv = ogs_gtp_xact_update_tx(s11_xact, &send_message.h, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp_xact_update_tx() failed");
+        return;
+    }
+
+    rv = ogs_gtp_xact_commit(s11_xact);
+    ogs_expect(rv == OGS_OK);
+}
+
 void sgwc_s11_handle_modify_bearer_request(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message)
@@ -469,6 +528,7 @@ void sgwc_s11_handle_modify_bearer_request(
 
     ogs_gtp2_uli_t uli;
     ogs_gtp2_f_teid_t *enb_s1u_teid = NULL;
+    bool mme_changed = false;
 
     ogs_assert(s11_xact);
     ogs_assert(message);
@@ -495,6 +555,33 @@ void sgwc_s11_handle_modify_bearer_request(
      *****************************************/
     ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
 
+    /*
+     * TS 29.274 Table 7.2.7-1 : the new MME sends its F-TEID for TAU/HO
+     * with an MME change and without SGW change (TS 23.401 5.3.3.2).
+     * The following S11 messages go to the new MME.
+     */
+    if (req->sender_f_teid_for_control_plane.presence) {
+        ogs_gtp2_f_teid_t *mme_s11_teid =
+            req->sender_f_teid_for_control_plane.data;
+        uint32_t teid;
+
+        if (req->sender_f_teid_for_control_plane.len <
+                OGS_GTP2_F_TEID_HDR_LEN) {
+            ogs_error("Invalid Sender F-TEID");
+            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            goto cleanup;
+        }
+        teid = be32toh(mme_s11_teid->teid);
+        if (teid != sgwc_ue->mme_s11_teid ||
+            s11_xact->gnode != sgwc_ue->gnode) {
+            ogs_info("    MME changed: MME_S11_TEID[%d->%d]",
+                    sgwc_ue->mme_s11_teid, teid);
+            sgwc_ue->mme_s11_teid = teid;
+            OGS_SETUP_GTP_NODE(sgwc_ue, s11_xact->gnode);
+        }
+        mme_changed = true;
+    }
+
     for (i = 0; i < OGS_BEARER_PER_UE; i++) {
         ogs_pfcp_xact_t *current_xact = NULL;
 
@@ -509,6 +596,20 @@ void sgwc_s11_handle_modify_bearer_request(
         }
         if (req->bearer_contexts_to_be_modified[i].s1_u_enodeb_f_teid.
             presence == 0) {
+            /* UE in ECM-IDLE after a TAU with MME change :
+             * only the control plane is updated */
+            if (mme_changed) {
+                if (!sgwc_bearer_find_by_ue_ebi(sgwc_ue,
+                        req->bearer_contexts_to_be_modified[i].
+                            eps_bearer_id.u8)) {
+                    ogs_error("Unknown EPS Bearer ID[%d]",
+                            req->bearer_contexts_to_be_modified[i].
+                                eps_bearer_id.u8);
+                    cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+                    goto cleanup;
+                }
+                continue;
+            }
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
             break;
         }
@@ -645,6 +746,15 @@ void sgwc_s11_handle_modify_bearer_request(
 
     ogs_info("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
+
+    /* Control plane only : no user plane change in the SGW-U */
+    if (ogs_list_empty(&pfcp_xact_list)) {
+        ogs_assert(mme_changed);
+        send_modify_bearer_response_cp_only(s11_xact, sgwc_ue, req);
+        return;
+    }
+
+    ogs_assert(dl_tunnel);
     ogs_info("    ENB_S1U_TEID[%d] SGW_S1U_TEID[%d]",
         dl_tunnel->remote_teid, dl_tunnel->local_teid);
 

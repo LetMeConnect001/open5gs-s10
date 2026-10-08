@@ -25,11 +25,13 @@
 #include "test-app.h"
 
 abts_suite *test_s10_identification(abts_suite *suite);
+abts_suite *test_s10_tau(abts_suite *suite);
 
 const struct testlist {
     abts_suite *(*func)(abts_suite *suite);
 } alltests[] = {
     {test_s10_identification},
+    {test_s10_tau},
     {NULL},
 };
 

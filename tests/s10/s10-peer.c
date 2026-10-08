@@ -36,11 +36,18 @@ static struct sockaddr_in mme_addr(void)
 
 int test_s10_peer_open(test_s10_peer_t *peer)
 {
+    return test_s10_peer_open_at(peer, TEST_S10_PEER_ADDRESS);
+}
+
+int test_s10_peer_open_at(test_s10_peer_t *peer, const char *address)
+{
     struct sockaddr_in sin;
     int on = 1;
 
     ogs_assert(peer);
+    ogs_assert(address);
 
+    peer->last = NULL;
     peer->fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (peer->fd < 0)
         return OGS_ERROR;
@@ -49,11 +56,11 @@ int test_s10_peer_open(test_s10_peer_t *peer)
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(OGS_GTPV2_C_UDP_PORT);
-    inet_pton(AF_INET, TEST_S10_PEER_ADDRESS, &sin.sin_addr);
+    inet_pton(AF_INET, address, &sin.sin_addr);
 
     if (bind(peer->fd, (struct sockaddr *)&sin, sizeof(sin)) != 0) {
-        ogs_error("Cannot bind the fake S10 peer [%s]:%d",
-                TEST_S10_PEER_ADDRESS, OGS_GTPV2_C_UDP_PORT);
+        ogs_error("Cannot bind the fake GTPv2-C node [%s]:%d",
+                address, OGS_GTPV2_C_UDP_PORT);
         close(peer->fd);
         peer->fd = -1;
         return OGS_ERROR;
@@ -69,6 +76,10 @@ void test_s10_peer_close(test_s10_peer_t *peer)
     if (peer->fd >= 0)
         close(peer->fd);
     peer->fd = -1;
+
+    if (peer->last)
+        ogs_pkbuf_free(peer->last);
+    peer->last = NULL;
 }
 
 int test_s10_peer_recv(test_s10_peer_t *peer, int timeout_ms,
@@ -103,17 +114,10 @@ int test_s10_peer_recv(test_s10_peer_t *peer, int timeout_ms,
 
     rv = ogs_gtp2_parse_msg(message, pkbuf);
 
-    /*
-     * The parsed message points into the received buffer. The buffer is
-     * kept until the next receive by the static below, which is enough
-     * for these sequential tests.
-     */
-    {
-        static ogs_pkbuf_t *last = NULL;
-        if (last)
-            ogs_pkbuf_free(last);
-        last = pkbuf;
-    }
+    /* The parsed message points into the received buffer */
+    if (peer->last)
+        ogs_pkbuf_free(peer->last);
+    peer->last = pkbuf;
 
     return rv;
 }

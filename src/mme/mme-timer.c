@@ -61,6 +61,10 @@ static mme_timer_cfg_t g_mme_timer_cfg[MAX_NUM_OF_MME_TIMER] = {
 
     [MME_TIMER_GN_HOLDING] =
         { .have = true, .duration = ogs_time_from_sec(20) },
+
+    /* Old MME after a Context Response (TS 23.401 5.3.3.1 step 4) */
+    [MME_TIMER_S10_HOLDING] =
+        { .have = true, .duration = ogs_time_from_sec(20) },
 };
 
 mme_timer_cfg_t *mme_timer_cfg(mme_timer_e id)
@@ -102,6 +106,8 @@ const char *mme_timer_get_name(mme_timer_e id)
         return "MME_TIMER_S11_HOLDING";
     case MME_TIMER_S10_ECHO:
         return "MME_TIMER_S10_ECHO";
+    case MME_TIMER_S10_HOLDING:
+        return "MME_TIMER_S10_HOLDING";
     default:
        break;
     }

@@ -588,6 +588,12 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             }
 
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
+                /* Old GUTI of a peer MME : ask the old MME on S10 */
+                if (mme_s10_context_start(enb_ue, mme_ue,
+                        &message->emm.tracking_area_update_request,
+                        e->pkbuf, h))
+                    break;
+
                 ogs_info("TAU request : Unknown UE");
                 r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                     OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);

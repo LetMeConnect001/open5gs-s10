@@ -20,6 +20,7 @@
 #include "ogs-gtp.h"
 
 #include "mme-s10-context.h"
+#include "mme-s10-path.h"
 
 static mme_s10_context_t self;
 static int context_initialized = 0;
@@ -764,6 +765,29 @@ void mme_s10_teid_pool_final(void)
     mme_s10_teid_hash = NULL;
 
     ogs_pool_final(&mme_s10_teid_pool);
+}
+
+void mme_s10_ue_init(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    mme_s10_ue_teid_alloc(mme_ue);
+
+    mme_ue->s10.t_holding = ogs_timer_add(ogs_app()->timer_mgr,
+            mme_s10_holding_timer_expire, OGS_UINT_TO_POINTER(mme_ue->id));
+    ogs_assert(mme_ue->s10.t_holding);
+}
+
+void mme_s10_ue_fini(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (mme_ue->s10.t_holding) {
+        ogs_timer_delete(mme_ue->s10.t_holding);
+        mme_ue->s10.t_holding = NULL;
+    }
+
+    mme_s10_ue_teid_free(mme_ue);
 }
 
 void mme_s10_ue_teid_alloc(mme_ue_t *mme_ue)

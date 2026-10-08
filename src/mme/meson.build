@@ -90,6 +90,7 @@ libmme_sources = files('''
     mme-s10-build.c
     mme-s10-path.c
     mme-s10-handler.c
+    mme-s10-tau.c
     mme-sm.c
     mme-path.c
     mme-dns-select.c

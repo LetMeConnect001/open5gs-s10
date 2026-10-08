@@ -43,6 +43,21 @@ int mme_s10_send_identification_response(
         ogs_gtp_xact_t *xact, uint8_t cause_value, mme_ue_t *mme_ue);
 
 /*
+ * TAU with MME change (TS 23.401 5.3.3, TS 29.274 7.3.5 to 7.3.7)
+ * 'nas' is the complete TAU Request message, security header included.
+ */
+int mme_s10_send_context_request(mme_s10_peer_t *peer,
+        mme_ue_t *mme_ue, const ogs_nas_eps_guti_t *guti,
+        const uint8_t *nas, int nas_len);
+/* Accepted Context Response. A rejection uses mme_s10_send_error_response */
+int mme_s10_send_context_response(ogs_gtp_xact_t *xact, mme_ue_t *mme_ue);
+int mme_s10_send_context_acknowledge(ogs_gtp_xact_t *xact,
+        mme_ue_t *mme_ue, uint8_t cause_value, bool sgw_change);
+
+/* Old MME : timer started with the Context Response */
+void mme_s10_holding_timer_expire(void *data);
+
+/*
  * Reply to an S10 request with a response that only carries a Cause.
  * 'request_type' is the type of the received request.
  */

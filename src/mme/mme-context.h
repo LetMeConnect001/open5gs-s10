@@ -578,6 +578,22 @@ struct mme_ue_s {
         uint32_t        mme_s10_teid;   /* MME-S10-TEID is derived from NODE */
         /* S10 request sent by this MME and not answered yet */
         ogs_pool_id_t   xact_id;
+
+        /* S10 TEID of the peer MME (Sender F-TEID for Control Plane) */
+        uint32_t        peer_s10_teid;
+
+        /* New MME : TAU with MME change in progress (TS 23.401 5.3.3) */
+        bool            tau;
+
+        /*
+         * Old MME : the context was given to a new MME in a Context
+         * Response. The UE is released when t_holding expires, if the new
+         * MME has accepted it (TS 23.401 5.3.3.1 steps 4, 13 and 18).
+         */
+        bool            context_sent;
+        bool            moved;          /* Context Acknowledge accepted */
+        bool            sgw_change;     /* The new MME relocated the SGW */
+        ogs_timer_t     *t_holding;
     } s10;
 
     struct {
@@ -976,6 +992,9 @@ struct mme_ue_s {
 #define GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH               1
 #define GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH               2
 #define GTP_COUNTER_DELETE_SESSION_BY_TAU                       3
+/* S10 : TAU with MME change, one request per PDN connection */
+#define GTP_COUNTER_MODIFY_BEARER_BY_S10_TAU                    4
+#define GTP_COUNTER_CREATE_SESSION_BY_S10_TAU                   5
     struct {
         uint8_t request;
         uint8_t response;
@@ -1313,6 +1332,7 @@ typedef enum {
     MME_UE_IMSI_FROM_IDENTITY_RESPONSE,
     MME_UE_IMSI_FROM_SGSN_CONTEXT_RESPONSE,
     MME_UE_IMSI_FROM_IDENTIFICATION_RESPONSE,  /* S10 */
+    MME_UE_IMSI_FROM_CONTEXT_RESPONSE,         /* S10 */
 } mme_ue_imsi_source_e;
 
 int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,

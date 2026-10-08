@@ -219,6 +219,143 @@ int mme_s10_send_identification_response(
     return rv;
 }
 
+/* No Context Response after all the retransmissions */
+static void context_timeout(ogs_gtp_xact_t *xact, void *data)
+{
+    ogs_assert(xact);
+
+    ogs_warn("S10: no Context Response");
+    mme_s10_handle_context_failure(OGS_POINTER_TO_UINT(data), xact->id);
+}
+
+int mme_s10_send_context_request(mme_s10_peer_t *peer,
+        mme_ue_t *mme_ue, const ogs_nas_eps_guti_t *guti,
+        const uint8_t *nas, int nas_len)
+{
+    int rv;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp_xact_t *xact = NULL;
+
+    ogs_assert(peer);
+    ogs_assert(mme_ue);
+    ogs_assert(guti);
+
+    /* The TEID of the old MME is not known yet (TS 29.274 5.5.2) */
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP2_CONTEXT_REQUEST_TYPE;
+    h.teid = 0;
+
+    pkbuf = mme_s10_build_context_request(mme_ue, guti, nas, nas_len);
+    if (!pkbuf) {
+        ogs_error("mme_s10_build_context_request() failed");
+        return OGS_ERROR;
+    }
+
+    xact = ogs_gtp_xact_local_create(&peer->gnode, &h, pkbuf,
+            context_timeout, OGS_UINT_TO_POINTER(mme_ue->id));
+    if (!xact) {
+        ogs_error("ogs_gtp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+    xact->local_teid = mme_ue->s10.mme_s10_teid;
+
+    rv = ogs_gtp_xact_commit(xact);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp_xact_commit() failed");
+        return rv;
+    }
+
+    mme_ue->s10.xact_id = xact->id;
+
+    ogs_info("S10: Context Request to `%s` GUTI[G:%d,C:%d,M_TMSI:0x%x]",
+            peer->id, guti->mme_gid, guti->mme_code, guti->m_tmsi);
+
+    return OGS_OK;
+}
+
+int mme_s10_send_context_response(ogs_gtp_xact_t *xact, mme_ue_t *mme_ue)
+{
+    int rv;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(xact);
+    ogs_assert(mme_ue);
+
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP2_CONTEXT_RESPONSE_TYPE;
+    h.teid = mme_ue->s10.peer_s10_teid;
+
+    pkbuf = mme_s10_build_context_response(
+            OGS_GTP2_CAUSE_REQUEST_ACCEPTED, mme_ue);
+    if (!pkbuf) {
+        ogs_error("mme_s10_build_context_response() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_update_tx(xact, &h, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp_xact_update_tx() failed");
+        return rv;
+    }
+
+    /* The transaction now waits for the Context Acknowledge */
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int mme_s10_send_context_acknowledge(ogs_gtp_xact_t *xact,
+        mme_ue_t *mme_ue, uint8_t cause_value, bool sgw_change)
+{
+    int rv;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(xact);
+    ogs_assert(mme_ue);
+
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP2_CONTEXT_ACKNOWLEDGE_TYPE;
+    h.teid = mme_ue->s10.peer_s10_teid;
+
+    pkbuf = mme_s10_build_context_acknowledge(cause_value, sgw_change);
+    if (!pkbuf) {
+        ogs_error("mme_s10_build_context_acknowledge() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_update_tx(xact, &h, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp_xact_update_tx() failed");
+        return rv;
+    }
+
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+void mme_s10_holding_timer_expire(void *data)
+{
+    int rv;
+    mme_event_t *e = NULL;
+
+    e = mme_event_new(MME_EVENT_S10_TIMER);
+    ogs_assert(e);
+    e->timer_id = MME_TIMER_S10_HOLDING;
+    e->mme_ue_id = OGS_POINTER_TO_UINT(data);
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        mme_event_free(e);
+    }
+}
+
 int mme_s10_send_error_response(
         ogs_gtp_xact_t *xact, uint8_t request_type, uint8_t cause_value)
 {

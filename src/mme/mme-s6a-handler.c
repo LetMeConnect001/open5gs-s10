@@ -24,6 +24,7 @@
 
 #include "mme-sm.h"
 #include "mme-s6a-handler.h"
+#include "mme-s10-handler.h"
 
 /* Unfortunately fd doesn't distinguish
  * between result-code and experimental-result-code.
@@ -111,6 +112,9 @@ uint8_t mme_s6a_handle_ula(
     ogs_subscription_data_t *subscription_data = NULL;
     ogs_slice_data_t *slice_data = NULL;
     int r, rv, num_of_session;
+    char *apn[OGS_MAX_NUM_OF_SESS];
+    int i, num_of_apn;
+    mme_sess_t *sess = NULL;
 
     ogs_assert(mme_ue);
     ogs_assert(s6a_message);
@@ -132,14 +136,46 @@ uint8_t mme_s6a_handle_ula(
 
     memcpy(&mme_ue->ambr, &subscription_data->ambr, sizeof(ogs_bitrate_t));
 
+    /*
+     * The PDN connections point to the APN subscription data, which is
+     * rebuilt below. Keep their APN to point to the same APN again :
+     * the order of the subscription may differ from the order of the
+     * PDN connections (e.g. PDN connections received on S10).
+     */
+    num_of_apn = 0;
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        if (num_of_apn >= OGS_MAX_NUM_OF_SESS)
+            break;
+        apn[num_of_apn++] = (sess->session && sess->session->name) ?
+            ogs_strdup(sess->session->name) : NULL;
+    }
+
     mme_session_remove_all(mme_ue);
 
     num_of_session = mme_ue_session_from_slice_data(mme_ue, slice_data);
     if (num_of_session == 0) {
         ogs_error("No Session");
+        for (i = 0; i < num_of_apn; i++)
+            if (apn[i]) ogs_free(apn[i]);
         return OGS_NAS_EMM_CAUSE_SEVERE_NETWORK_FAILURE;
     }
     mme_ue->num_of_session = num_of_session;
+
+    i = 0;
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        if (i >= num_of_apn)
+            break;
+        if (apn[i]) {
+            ogs_session_t *session = mme_session_find_by_apn(mme_ue, apn[i]);
+            if (session)
+                sess->session = session;
+            else
+                ogs_warn("[%s] APN [%s] is not in the subscription",
+                        mme_ue->imsi_bcd, apn[i]);
+            ogs_free(apn[i]);
+        }
+        i++;
+    }
 
     mme_ue->context_identifier = slice_data->context_identifier;
 
@@ -349,6 +385,11 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
          * serving HSS so any later S6a request is realm-routed again. */
         mme_ue_clear_hss_identity(mme_ue);
         mme_ue->detach_type = MME_DETACH_TYPE_HSS_IMPLICIT;
+
+        /* S10 : TS 23.401 5.3.3.1 step 13, the old MME releases the UE
+         * when the timer started with the Context Response expires */
+        if (mme_s10_cancel_location_delayed(mme_ue))
+            break;
 
         /* 3GPP TS 23.401 D.3.5.5 8), 3GPP TS 23.060 6.9.1.2.2 8):
          * "When the timer described in step 2 is running, the MM and PDP/EPS

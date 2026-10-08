@@ -39,6 +39,9 @@ int mme_gtp_send_create_session_request_now(
 int mme_gtp_send_modify_bearer_request(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         int uli_presence, int modify_action);
+/* TAU with MME change and without SGW change (TS 23.401 5.3.3.2 step 9) */
+int mme_gtp_send_modify_bearer_request_in_tau(
+        enb_ue_t *enb_ue, mme_sess_t *sess);
 int mme_gtp_send_delete_session_request(
         enb_ue_t *enb_ue, sgw_ue_t *sgw_ue, mme_sess_t *sess, int action);
 void mme_gtp_send_delete_all_sessions(

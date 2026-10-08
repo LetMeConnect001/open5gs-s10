@@ -59,6 +59,50 @@ bool mme_s10_identification_start(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
 void mme_s10_handle_identification_failure(
         ogs_pool_id_t mme_ue_id, ogs_pool_id_t xact_id);
 
+/*
+ * Peer MME of an old GUTI given by the UE, or NULL when no peer can be
+ * asked : GUTI of this MME, unknown GUMMEI, path down, or a NAS message
+ * that the old MME cannot check because it is not integrity protected.
+ */
+mme_s10_peer_t *mme_s10_peer_of_old_guti(
+        const ogs_nas_eps_mobile_identity_t *identity,
+        ogs_nas_security_header_type_t h, ogs_nas_eps_guti_t *nas_guti);
+
+/*
+ * TAU with MME change (TS 23.401 5.3.3.1 and 5.3.3.2), mme-s10-tau.c
+ */
+
+/* New MME : TAU Request with an old GUTI of a peer MME. Sends a Context
+ * Request and returns true when the answer is awaited. */
+bool mme_s10_context_start(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        ogs_nas_eps_tracking_area_update_request_t *tau_request,
+        ogs_pkbuf_t *pkbuf, ogs_nas_security_header_type_t h);
+
+/* New MME */
+void mme_s10_handle_context_response(mme_s10_peer_t *peer,
+        ogs_gtp_xact_t *xact, ogs_gtp2_context_response_t *rsp);
+void mme_s10_handle_context_failure(
+        ogs_pool_id_t mme_ue_id, ogs_pool_id_t xact_id);
+void mme_s10_handle_tau_modify_bearer_response(enb_ue_t *enb_ue,
+        mme_ue_t *mme_ue, mme_ue_t *mme_ue_from_teid,
+        ogs_gtp2_modify_bearer_response_t *rsp);
+void mme_s10_handle_tau_sessions_updated(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
+void mme_s10_handle_tau_failure(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint8_t emm_cause);
+
+/* Old MME */
+void mme_s10_handle_context_request(mme_s10_peer_t *peer,
+        ogs_gtp_xact_t *xact, ogs_gtp2_context_request_t *req);
+void mme_s10_handle_context_acknowledge(mme_s10_peer_t *peer,
+        ogs_gtp_xact_t *xact, mme_ue_t *mme_ue,
+        ogs_gtp2_context_acknowledge_t *ack);
+void mme_s10_handle_holding_timer(mme_ue_t *mme_ue);
+void mme_s10_handle_old_ue_released(mme_ue_t *mme_ue);
+
+/* Old MME : Cancel Location while the context is held for a new MME.
+ * Returns true when the release is left to the holding timer. */
+bool mme_s10_cancel_location_delayed(mme_ue_t *mme_ue);
+
 #ifdef __cplusplus
 }
 #endif
